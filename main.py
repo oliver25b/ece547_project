@@ -15,7 +15,7 @@ def unpickle(file):
         dict = pickle.load(fo, encoding='bytes')
     return dict
 
-folder = Path('./project4/cifar-10-batches-py')
+folder = Path('./kdd-cup-1999-data_10_percent')
 for file in folder.iterdir():
-     if file.name.endswith("1"):
-        data1 = unpickle(file)
+    data = unpickle(file)
+
