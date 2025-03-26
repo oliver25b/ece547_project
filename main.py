@@ -1,4 +1,5 @@
 import pickle
+import pandas as pd
 import os
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -15,7 +16,10 @@ def unpickle(file):
         dict = pickle.load(fo, encoding='bytes')
     return dict
 
-folder = Path('./kdd-cup-1999-data')
-for file in folder.iterdir():
-    data = unpickle(file)
 
+#folder = Path('./kdd-cup-1999-data/versions')
+#for file in folder.iterdir():
+#    data = unpickle(file)
+
+data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=['duration', 'protocol_type', 'service', 'flag', 'src_bytes', 'dst_bytes', 'wrong_fragment', 'urgent', 'hot', 'num_failed_logins', 'num_compromised', 'root_shell', 'su_attempted', 'num_root', 'num_file_creations', 'num_shells', 'num_access_files', 'num_outbound_cmds', 'count', 'srv_count', 'serror_rate', 'srv_serror_rate', 'rerror_rate', 'srv_rerror_rate', 'same_srv_rate', 'diff_srv_rate', 'srv_diff_host_rate', 'dst_host_count', 'dst_host_srv_count', 'dst_host_same_srv_rate', 'dst_host_diff_srv_rate', 'dst_host_same_src_port_rate', 'dst_host_srv_diff_host_rate', 'dst_host_serror_rate', 'dst_host_srv_serror_rate', 'dst_host_rerror_rate', 'dst_host_srv_rerror_rate', 'w', 'x', 'y', 'z', 'classification'])
+print(data)
