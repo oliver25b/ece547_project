@@ -15,7 +15,7 @@ def unpickle(file):
         dict = pickle.load(fo, encoding='bytes')
     return dict
 
-folder = Path('./kdd-cup-1999-data_10_percent')
+folder = Path('./kdd-cup-1999-data')
 for file in folder.iterdir():
     data = unpickle(file)
 
