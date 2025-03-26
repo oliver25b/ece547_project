@@ -24,24 +24,23 @@ column_labels_classif = ['duration', 'protocol_type', 'service', 'flag', 'src_by
                         'dst_host_same_srv_rate', 'dst_host_diff_srv_rate', 'dst_host_same_src_port_rate', 'dst_host_srv_diff_host_rate', 
                         'dst_host_serror_rate', 'dst_host_srv_serror_rate', 'dst_host_rerror_rate', 'dst_host_srv_rerror_rate', 'classification']
 
-data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=column_labels_classif, skiprows=lambda x: x % 100 != 0)
+data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=column_labels_classif, skiprows=lambda x: x % 100 != 0) #remove skiprows to process all
 training_data = data.copy(deep=True)
 training_data = training_data.drop(axis='columns', columns=['classification'])
 training_answers = data.copy(deep=True)
 training_answers = training_answers.drop(axis='columns', columns=column_labels)
-testing_data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.testdata.unlabeled/kddcup.testdata.unlabeled", index_col=False, names=column_labels, skiprows=lambda x: x % 100 != 0)
+testing_data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.testdata.unlabeled/kddcup.testdata.unlabeled", index_col=False, names=column_labels, skiprows=lambda x: x % 100 != 0) #remove skiprows to process all
+
+for row in range(0, training_answers.index.size):
+    if (training_answers.iat[row, 0] == "normal."):
+        training_answers.iat[row, 0] = False
+    else:
+        training_answers.iat[row, 0] = True
+training_answers = training_answers.rename(columns={1:'is_malicious'})
 
 #use while debugging
 print(training_data)
 print(training_answers)
 print(testing_data)
-########################################################################
+####################
 
-for row in range(0, training_answers.index.size):
-    if (training_answers.iat[row, 0] == "normal."):
-        training_answers.iat[row, 0] = "False"
-    else:
-        training_answers.iat[row, 0] = "True"
-training_answers = training_answers.convert_dtypes(infer_objects=False, convert_floating=False, convert_integer=False, convert_string=False, convert_boolean=True)
-training_answers = training_answers.rename(index={1:'is_malicious'})
-print(training_answers)
