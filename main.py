@@ -15,8 +15,10 @@ import torch.nn as nn
 import torch.optim as optim
 import tqdm
 
+load_save = False
+create_save = False
+
 os.chdir("C:/Users/olive/Documents/Git/ece547/ece547_project")
-load_save = True
 def printOut(a):
     b = pd.DataFrame(a)
     b.to_csv("./dataOutputTemp.csv")
@@ -40,13 +42,12 @@ if (not(load_save)):
                             'udp', 'tcp', 'other_protocol', 'private', 'smtp', 'ftp', 'ftp-data', 'telnet', 'domain_u', 'other_service',
                             'SF', 'REJ', 'other_flag']
 
-    data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=column_labels_classif, skiprows=lambda x: x % 100 != 0) #remove skiprows to process all
+    data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=column_labels_classif, skiprows=lambda x: x % 10 != 0) #remove skiprows to process all
     training_data = data.copy(deep=True)
     training_data = training_data.drop(axis='columns', columns=['classification'])
     training_answers = data.copy(deep=True)
     training_answers = training_answers.drop(axis='columns', columns=column_labels)
-    #testing_data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.testdata.unlabeled/kddcup.testdata.unlabeled", index_col=False, names=column_labels, skiprows=lambda x: x % 100 != 0) #remove skiprows to process all
-    testing_data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=column_labels_classif, skiprows=lambda x: x % 100 != 1) #remove skiprows to process all
+    testing_data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=column_labels_classif, skiprows=lambda x: x % 10 != 1) #remove skiprows to process all
     testing_answers = testing_data.copy(deep=True)
     testing_answers = testing_answers.drop(axis='columns', columns=column_labels)
     testing_data = testing_data.drop(axis='columns', columns=['classification'])
@@ -64,13 +65,6 @@ if (not(load_save)):
         else:
             testing_answers.iat[row, 0] = 1
     #testing_answers.rename(columns={0 : 'is_malicious'}, inplace=True)
-
-    #use while debugging
-    print(training_data)
-    print(training_answers)
-    print(testing_data)
-    print(testing_answers)
-    ####################
 
     for row in range(0, training_data.index.size):
         match(training_data.iat[row,1]):
@@ -245,9 +239,10 @@ if (not(load_save)):
     training_data = training_data.drop(axis='columns', columns=['protocol_type', 'service', 'flag'])
     testing_data = testing_data.drop(axis='columns', columns=['protocol_type', 'service', 'flag'])
     
-    with open('data_cache.pkl', 'wb') as outf:
-        pickle.dump([training_data, training_answers, testing_data, testing_answers, data], outf) 
-    print("pickled and saved!")    
+    if (create_save):
+        with open('data_cache.pkl', 'wb') as outf:
+            pickle.dump([training_data, training_answers, testing_data, testing_answers, data], outf) 
+        print("pickled and saved!")    
 else:
     with open('data_cache.pkl', 'rb') as inf: 
         [training_data, training_answers, testing_data, testing_answers, data] = pickle.load(inf) 
@@ -258,10 +253,21 @@ print(testing_data)
 printOut(training_data)
 print(training_answers)
 
+print("other important things:")
+print(training_data.shape[1])  # Should be 51
+print(training_data.dtypes)
 scaler = StandardScaler()
 training_data = pd.DataFrame(scaler.fit_transform(training_data))
 testing_data = pd.DataFrame(scaler.transform(testing_data))
 #####################
+
+# Combine, shuffle together, split again
+combined = pd.concat([training_data, training_answers], axis=1)
+shuffled = combined.sample(frac=1, random_state=42).reset_index(drop=True)
+training_data = shuffled.iloc[:, :-1]
+training_answers = shuffled.iloc[:, -1]
+
+
 
 #nn = MLPClassifier(solver='sgd', alpha=0.0001, hidden_layer_sizes=(100,100), verbose=True, activation='relu', max_iter=1500, tol=1e-4, n_iter_no_change=20)#, learning_rate='adaptive')
 #nn = nn.fit(training_data.to_numpy().astype(float), np.ravel(training_answers.to_numpy().astype(float)))
@@ -286,23 +292,25 @@ testing_data = pd.DataFrame(scaler.transform(testing_data))
 class Multiclass(nn.Module):
     def __init__(self):
         super().__init__()
-        self.hidden = nn.Linear(51, 100)
+        self.hidden1 = nn.Linear(51, 100)
+        self.hidden2 = nn.Linear(100, 100)
         self.act = nn.ReLU()
         self.output = nn.Linear(100, 2)
 
     def forward(self, x):
-        x = self.act(self.hidden(x))
+        x = self.act(self.hidden1(x))
+        x = self.act(self.hidden2(x))
         x = self.output(x)
         return x
 
 # loss metric and optimizer
 model = Multiclass()
 loss_fn = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.01)
 
 # prepare model and training parameters
 n_epochs = 200
-batch_size = 5
+batch_size = 2000
 batches_per_epoch = len(training_data) // batch_size
 
 best_acc = - float(-999999.999)   # init to negative infinity
@@ -326,9 +334,13 @@ for epoch in range(n_epochs):
         for i in bar:
             # take a batch
             start = i * batch_size
+                #print(training_data.iloc[start:start+batch_size])
+                #print(training_answers.iloc[start:start+batch_size])
             X_batch = torch.tensor(training_data.to_numpy().astype(float), dtype=torch.float32)[start:start+batch_size]
             y_batch = torch.tensor(np.ravel(training_answers.to_numpy().astype(float)), dtype=torch.long)[start:start+batch_size]
             # forward pass
+                #print(X_batch)
+                #print(y_batch)
             y_pred = model(X_batch)
             loss = loss_fn(y_pred, y_batch)
             # backward pass
