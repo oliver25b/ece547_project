@@ -1,17 +1,25 @@
 import pandas as pd
-#import os
-#from pathlib import Path
+import os
 import matplotlib.pyplot as plt
 import numpy as np
+import copy
 #import random as rd
 #from matplotlib import pylab
 import pickle
-from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import confusion_matrix
-from sklearn.metrics import classification_report
+from sklearn.preprocessing import StandardScaler
+#from sklearn.neural_network import MLPClassifier
+#from sklearn.metrics import confusion_matrix
+#from sklearn.metrics import classification_report
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import tqdm
 
+os.chdir("C:/Users/olive/Documents/Git/ece547/ece547_project")
 load_save = True
-
+def printOut(a):
+    b = pd.DataFrame(a)
+    b.to_csv("./dataOutputTemp.csv")
 if (not(load_save)):
     column_labels = ['duration', 'protocol_type', 'service', 'flag', 'src_bytes', 'dst_bytes', 'land', 'wrong_fragment', 
                         'urgent', 'hot', 'num_failed_logins', 'logged_in', 'num_compromised', 'root_shell', 'su_attempted', 
@@ -48,14 +56,14 @@ if (not(load_save)):
             training_answers.iat[row, 0] = 0
         else:
             training_answers.iat[row, 0] = 1
-    training_answers = training_answers.rename(columns={1:'is_malicious'})
+    #training_answers.rename(columns={0 : 'is_malicious'}, inplace=True)
 
     for row in range(0, testing_answers.index.size):
         if (testing_answers.iat[row, 0] == "normal."):
             testing_answers.iat[row, 0] = 0
         else:
             testing_answers.iat[row, 0] = 1
-    testing_answers = testing_answers.rename(columns={1:'is_malicious'})
+    #testing_answers.rename(columns={0 : 'is_malicious'}, inplace=True)
 
     #use while debugging
     print(training_data)
@@ -63,14 +71,6 @@ if (not(load_save)):
     print(testing_data)
     print(testing_answers)
     ####################
-
-    #training_data.append(axis='columns', columns=['udp', 'tcp', 'other_protocol'])
-    #training_data.append(axis='columns', columns=['private', 'smtp', 'ftp' 'ftp-data', 'telnet', 'domain_u', 'other_service'])
-    #training_data.append(axis='columns', columns=['SF', 'REJ', 'other_flag'])
-    #
-    #testing_data.append(axis='columns', columns=['udp', 'tcp', 'other_protocol'])
-    #testing_data.append(axis='columns', columns=['private', 'smtp', 'ftp', 'ftp-data', 'telnet', 'domain_u','other_service'])
-    #testing_data.append(axis='columns', columns=['SF', 'REJ', 'other_flag'])
 
     for row in range(0, training_data.index.size):
         match(training_data.iat[row,1]):
@@ -255,24 +255,134 @@ else:
 #####################
 print(training_data)
 print(testing_data)
+printOut(training_data)
+print(training_answers)
+
+scaler = StandardScaler()
+training_data = pd.DataFrame(scaler.fit_transform(training_data))
+testing_data = pd.DataFrame(scaler.transform(testing_data))
 #####################
 
-nn = MLPClassifier(solver='sgd', alpha=0.0001, hidden_layer_sizes=(100,100), verbose=True, activation='relu', max_iter=1500, tol=1e-4, n_iter_no_change=20)#, learning_rate='adaptive')
-nn = nn.fit(np.asfarray(training_data), np.ravel(training_answers))
-predictions = nn.predict(testing_data)
-scores = nn.predict_proba(testing_data)
+#nn = MLPClassifier(solver='sgd', alpha=0.0001, hidden_layer_sizes=(100,100), verbose=True, activation='relu', max_iter=1500, tol=1e-4, n_iter_no_change=20)#, learning_rate='adaptive')
+#nn = nn.fit(training_data.to_numpy().astype(float), np.ravel(training_answers.to_numpy().astype(float)))
+#predictions = nn.predict(testing_data.to_numpy().astype(float))
+#scores = nn.predict_proba(testing_data.to_numpy().astype(float))
+#
+#print("Number of Epochs: ", nn.n_iter_)
+#print("Final Mean Accuracy: ", nn.score(testing_data, testing_answers))
+#print("Final Loss Achieved: ", nn.loss_)
+#print("Lowest Loss Acheived: ", nn.best_loss_)
+#print("Confusion Matrix:\n", confusion_matrix(testing_answers, predictions))
+#print(" ")
+#print(classification_report(testing_answers, predictions, target_names=['not malicious', 'malicious']))
+#
+#fig = plt.figure()
+#plt.plot(nn.loss_curve_)
+#plt.title("Loss Curve")
+#plt.xlabel("# Epochs")
+#plt.ylabel("Loss")
+#plt.show()
 
-print("Number of Epochs: ", nn.n_iter_)
-print("Final Mean Accuracy: ", nn.score(testing_data, testing_answers))
-print("Final Loss Achieved: ", nn.loss_)
-print("Lowest Loss Acheived: ", nn.best_loss_)
-print("Confusion Matrix:\n", confusion_matrix(testing_data, predictions))
-print(" ")
-print(classification_report(testing_data, predictions, target_names=['not malicious', 'malicious']))
+class Multiclass(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.hidden = nn.Linear(51, 100)
+        self.act = nn.ReLU()
+        self.output = nn.Linear(100, 2)
 
-fig = plt.figure()
-plt.plot(nn.loss_curve_)
-plt.title("Loss Curve")
-plt.xlabel("# Epochs")
-plt.ylabel("Loss")
+    def forward(self, x):
+        x = self.act(self.hidden(x))
+        x = self.output(x)
+        return x
+
+# loss metric and optimizer
+model = Multiclass()
+loss_fn = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# prepare model and training parameters
+n_epochs = 200
+batch_size = 5
+batches_per_epoch = len(training_data) // batch_size
+
+best_acc = - float(-999999.999)   # init to negative infinity
+best_weights = None
+train_loss_hist = []
+train_acc_hist = []
+test_loss_hist = []
+test_acc_hist = []
+
+training_answers = training_answers.astype(int)
+testing_answers = testing_answers.astype(int)
+
+# training loop
+for epoch in range(n_epochs):
+    epoch_loss = []
+    epoch_acc = []
+    # set model in training mode and run through each batch
+    model.train()
+    with tqdm.trange(batches_per_epoch, unit="batch", mininterval=0) as bar:
+        bar.set_description(f"Epoch {epoch}")
+        for i in bar:
+            # take a batch
+            start = i * batch_size
+            X_batch = torch.tensor(training_data.to_numpy().astype(float), dtype=torch.float32)[start:start+batch_size]
+            y_batch = torch.tensor(np.ravel(training_answers.to_numpy().astype(float)), dtype=torch.long)[start:start+batch_size]
+            # forward pass
+            y_pred = model(X_batch)
+            loss = loss_fn(y_pred, y_batch)
+            # backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            # update weights
+            optimizer.step()
+            # compute and store metrics
+            acc = (torch.argmax(y_pred, 1) == y_batch).float().mean()
+            epoch_loss.append(float(loss))
+            epoch_acc.append(float(acc))
+            bar.set_postfix(
+                loss=float(loss),
+                acc=float(acc)
+            )
+    # set model in evaluation mode and run through the test set
+    model.eval()
+    with torch.no_grad():
+        X_test = torch.tensor(testing_data.to_numpy().astype(float), dtype=torch.float32)
+        y_test = torch.tensor(testing_answers.to_numpy(), dtype=torch.long)
+
+        y_pred = model(X_test)
+        acc = (torch.argmax(y_pred, 1) == y_test).float().mean()
+        print(f"Test Accuracy: {acc.item() * 100:.2f}%")
+    
+
+    y_pred = model(torch.tensor(testing_data.to_numpy().astype(float), dtype=torch.float32))
+    ce = loss_fn(y_pred, torch.tensor(np.ravel(testing_answers.to_numpy().astype(float)), dtype=torch.long))
+    acc = (torch.argmax(y_pred, 1) == torch.argmax(torch.tensor(np.ravel(testing_answers.to_numpy().astype(float)), dtype=torch.long), 0)).float().mean()
+    ce = float(ce)
+    acc = float(acc)
+    train_loss_hist.append(np.mean(epoch_loss))
+    train_acc_hist.append(np.mean(epoch_acc))
+    test_loss_hist.append(ce)
+    test_acc_hist.append(acc)
+    if acc > best_acc:
+        best_acc = acc
+        best_weights = copy.deepcopy(model.state_dict())
+    print(f"Epoch {epoch} validation: Cross-entropy={ce:.2f}, Accuracy={acc*100:.1f}%")
+
+# Restore best model
+model.load_state_dict(best_weights)
+
+# Plot the loss and accuracy
+plt.plot(train_loss_hist, label="train")
+plt.plot(test_loss_hist, label="test")
+plt.xlabel("epochs")
+plt.ylabel("cross entropy")
+plt.legend()
+plt.show()
+
+plt.plot(train_acc_hist, label="train")
+plt.plot(test_acc_hist, label="test")
+plt.xlabel("epochs")
+plt.ylabel("accuracy")
+plt.legend()
 plt.show()
