@@ -15,9 +15,10 @@ import torch.nn as nn
 import torch.optim as optim
 import tqdm
 
-load_save = False
+load_save = True
 create_save = False
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 os.chdir("C:/Users/olive/Documents/Git/ece547/ece547_project")
 def printOut(a):
     b = pd.DataFrame(a)
@@ -267,7 +268,11 @@ shuffled = combined.sample(frac=1, random_state=42).reset_index(drop=True)
 training_data = shuffled.iloc[:, :-1]
 training_answers = shuffled.iloc[:, -1]
 
+training_data_tensor = torch.tensor(training_data.to_numpy().astype(float), dtype=torch.float32, device=device)
+training_answers_tensor = torch.tensor(np.ravel(training_answers.to_numpy().astype(float)), dtype=torch.float32, device=device)
 
+testing_data_tensor = torch.tensor(testing_data.to_numpy().astype(float), dtype=torch.float32, device=device)
+testing_answers_tensor = torch.tensor(np.ravel(testing_answers.to_numpy().astype(float)), dtype=torch.float32, device=device)
 
 #nn = MLPClassifier(solver='sgd', alpha=0.0001, hidden_layer_sizes=(100,100), verbose=True, activation='relu', max_iter=1500, tol=1e-4, n_iter_no_change=20)#, learning_rate='adaptive')
 #nn = nn.fit(training_data.to_numpy().astype(float), np.ravel(training_answers.to_numpy().astype(float)))
@@ -292,10 +297,10 @@ training_answers = shuffled.iloc[:, -1]
 class Multiclass(nn.Module):
     def __init__(self):
         super().__init__()
-        self.hidden1 = nn.Linear(51, 100)
-        self.hidden2 = nn.Linear(100, 100)
+        self.hidden1 = nn.Linear(51, 4)
+        self.hidden2 = nn.Linear(4, 4)
         self.act = nn.ReLU()
-        self.output = nn.Linear(100, 2)
+        self.output = nn.Linear(4, 1)
 
     def forward(self, x):
         x = self.act(self.hidden1(x))
@@ -304,24 +309,23 @@ class Multiclass(nn.Module):
         return x
 
 # loss metric and optimizer
-model = Multiclass()
-loss_fn = nn.CrossEntropyLoss()
+model = Multiclass().to(device)
+# around 99% normal, 1% malicious
+pos_weight = torch.tensor([99/1], device=device)
+loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer = optim.Adam(model.parameters(), lr=0.01)
 
 # prepare model and training parameters
 n_epochs = 200
-batch_size = 2000
+batch_size = 16
 batches_per_epoch = len(training_data) // batch_size
 
-best_acc = - float(-999999.999)   # init to negative infinity
+best_acc = - float('inf')   # init to negative infinity
 best_weights = None
 train_loss_hist = []
 train_acc_hist = []
 test_loss_hist = []
 test_acc_hist = []
-
-training_answers = training_answers.astype(int)
-testing_answers = testing_answers.astype(int)
 
 # training loop
 for epoch in range(n_epochs):
@@ -334,14 +338,14 @@ for epoch in range(n_epochs):
         for i in bar:
             # take a batch
             start = i * batch_size
-                #print(training_data.iloc[start:start+batch_size])
-                #print(training_answers.iloc[start:start+batch_size])
-            X_batch = torch.tensor(training_data.to_numpy().astype(float), dtype=torch.float32)[start:start+batch_size]
-            y_batch = torch.tensor(np.ravel(training_answers.to_numpy().astype(float)), dtype=torch.long)[start:start+batch_size]
+
+            x_batch = training_data_tensor[start:start+batch_size].to(device)
+            y_batch = training_answers_tensor[start:start+batch_size].to(device)
             # forward pass
-                #print(X_batch)
+                #print(x_batch)
                 #print(y_batch)
-            y_pred = model(X_batch)
+            y_pred = model(x_batch)
+            y_batch = y_batch.unsqueeze(1)
             loss = loss_fn(y_pred, y_batch)
             # backward pass
             optimizer.zero_grad()
@@ -349,7 +353,8 @@ for epoch in range(n_epochs):
             # update weights
             optimizer.step()
             # compute and store metrics
-            acc = (torch.argmax(y_pred, 1) == y_batch).float().mean()
+            y_pred_labels = (torch.sigmoid(y_pred) > 0.5).float()
+            acc = (y_pred_labels.squeeze() == y_batch.float()).float().mean()
             epoch_loss.append(float(loss))
             epoch_acc.append(float(acc))
             bar.set_postfix(
@@ -359,17 +364,21 @@ for epoch in range(n_epochs):
     # set model in evaluation mode and run through the test set
     model.eval()
     with torch.no_grad():
-        X_test = torch.tensor(testing_data.to_numpy().astype(float), dtype=torch.float32)
-        y_test = torch.tensor(testing_answers.to_numpy(), dtype=torch.long)
+        X_test = testing_data_tensor
+        y_test = testing_answers_tensor
 
         y_pred = model(X_test)
-        acc = (torch.argmax(y_pred, 1) == y_test).float().mean()
+        y_pred_labels = (torch.sigmoid(y_pred) > 0.5).float()
+        acc = (y_pred_labels.squeeze() == y_batch.float()).float().mean()
         print(f"Test Accuracy: {acc.item() * 100:.2f}%")
     
 
-    y_pred = model(torch.tensor(testing_data.to_numpy().astype(float), dtype=torch.float32))
-    ce = loss_fn(y_pred, torch.tensor(np.ravel(testing_answers.to_numpy().astype(float)), dtype=torch.long))
-    acc = (torch.argmax(y_pred, 1) == torch.argmax(torch.tensor(np.ravel(testing_answers.to_numpy().astype(float)), dtype=torch.long), 0)).float().mean()
+    y_pred = model(testing_data_tensor)
+    testing_answers_tensor = testing_answers_tensor.unsqueeze(1)
+    y_pred_labels = (torch.sigmoid(y_pred) > 0.5).float()
+    acc = (y_pred_labels.squeeze() == y_test.float()).float().mean()
+    ce = loss_fn(y_pred, testing_answers_tensor)
+    testing_answers_tensor = testing_answers_tensor.squeeze(1)
     ce = float(ce)
     acc = float(acc)
     train_loss_hist.append(np.mean(epoch_loss))
@@ -398,3 +407,5 @@ plt.xlabel("epochs")
 plt.ylabel("accuracy")
 plt.legend()
 plt.show()
+
+torch.save(best_weights, "best_model.pth")
