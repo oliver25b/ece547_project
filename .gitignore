@@ -1,3 +1,5 @@
 kdd-cup-1999-data/**
 data_cache.pkl
 data_cache.pkl
+data_cache.pkl
+*.pkl
