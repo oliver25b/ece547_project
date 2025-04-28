@@ -15,9 +15,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import tqdm
+from torchinfo import summary
+
 
 load_save = True
 create_save = False
+load_old_model = False
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 os.chdir("C:/Users/olive/Documents/Git/ece547/ece547_project")
@@ -49,7 +52,7 @@ if (not(load_save)):
     training_data = training_data.drop(axis='columns', columns=['classification'])
     training_answers = data.copy(deep=True)
     training_answers = training_answers.drop(axis='columns', columns=column_labels)
-    testing_data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=column_labels_classif, skiprows=lambda x: x % 10 != 1) #remove skiprows to process all
+    testing_data = pd.read_csv("./kdd-cup-1999-data/versions/1/kddcup.data/kddcup.data", index_col=False, names=column_labels_classif, skiprows=lambda x: x % 4 != 1) #remove skiprows to process all
     testing_answers = testing_data.copy(deep=True)
     testing_answers = testing_answers.drop(axis='columns', columns=column_labels)
     testing_data = testing_data.drop(axis='columns', columns=['classification'])
@@ -252,24 +255,24 @@ else:
 printOut(training_data)
         
 #####################
-print("raw training data: ")
-print(training_data)
-print("raw training answers: ")
-print(training_answers)
-
-print("raw testing data: ")
-print(testing_data)
-print("raw testing answers: ")
-print(testing_answers)
+#print("raw training data: ")
+#print(training_data)
+#print("raw training answers: ")
+#print(training_answers)
+#
+#print("raw testing data: ")
+#print(testing_data)
+#print("raw testing answers: ")
+#print(testing_answers)
 
 scaler = StandardScaler()
 training_data = pd.DataFrame(scaler.fit_transform(training_data))
 testing_data = pd.DataFrame(scaler.transform(testing_data))
 #####################
-print("training data after scaler: ")
-print(training_data)
-print("testing data after scaler: ")
-print(testing_data)
+#print("training data after scaler: ")
+#print(training_data)
+#print("testing data after scaler: ")
+#print(testing_data)
 
 # Combine, shuffle together, split again
 combined = pd.concat([training_data, training_answers], axis=1)
@@ -277,10 +280,10 @@ shuffled = combined.sample(frac=1, random_state=42).reset_index(drop=True)
 training_data = shuffled.iloc[:, :-1]
 training_answers = shuffled.iloc[:, -1]
 
-print("training data after combine and shuffle: ")
-print(training_data)
-print("training answers after combine and shuffle:  ")
-print(training_answers)
+#print("training data after combine and shuffle: ")
+#print(training_data)
+#print("training answers after combine and shuffle:  ")
+#print(training_answers)
 
 training_data_tensor = torch.tensor(training_data.to_numpy().astype(float), dtype=torch.float32, device=device)
 training_answers_tensor = torch.tensor(np.ravel(training_answers.to_numpy().astype(float)), dtype=torch.float32, device=device)
@@ -288,14 +291,14 @@ training_answers_tensor = torch.tensor(np.ravel(training_answers.to_numpy().asty
 testing_data_tensor = torch.tensor(testing_data.to_numpy().astype(float), dtype=torch.float32, device=device)
 testing_answers_tensor = torch.tensor(np.ravel(testing_answers.to_numpy().astype(float)), dtype=torch.float32, device=device)
 
-print("training data tensor: ")
-print(training_data_tensor)
-print("training answers tensor: ")
-print(training_answers_tensor)
-print("testing data tensor: ")
-print(testing_data_tensor)
-print("testing answers tensor: ")
-print(testing_answers_tensor)
+#print("training data tensor: ")
+#print(training_data_tensor)
+#print("training answers tensor: ")
+#print(training_answers_tensor)
+#print("testing data tensor: ")
+#print(testing_data_tensor)
+#print("testing answers tensor: ")
+#print(testing_answers_tensor)
 
 class Multiclass(nn.Module):
     def __init__(self):
@@ -305,26 +308,54 @@ class Multiclass(nn.Module):
         self.hidden3 = nn.Linear(64, 32)
         self.output = nn.Linear(32, 1)
         self.act = nn.ReLU()
-
     def forward(self, x):
         x = self.act(self.hidden1(x))
         x = self.act(self.hidden2(x))
         x = self.act(self.hidden3(x))
         x = self.output(x)
         return x
+    
+class EarlyStopping:
+    def __init__(self, patience=5, threshold=1, verbose=False):
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.threshold = threshold
 
-# loss metric and optimizer
+    def __call__(self, score, model, path):
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(model, path)
+        elif (score < self.best_score) or (score >= self.threshold):
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.save_checkpoint(model, path)
+            self.counter = 0
+
+    def save_checkpoint(self, model, path):
+        torch.save(model.state_dict(), path)
+        if self.verbose:
+            print('Validation score improved, saving model...')
+
+# loss metric and optimizer, dropout
 model = Multiclass().to(device)
+early_stopping = EarlyStopping(patience=3, threshold=0.999, verbose=True)
+
 # around 99% normal, 1% malicious
 pos_weight = torch.tensor([99/1], device=device)
 loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer = optim.Adam(model.parameters(), lr=0.001)
-
 # prepare model and training parameters
-n_epochs = 40
+n_epochs = 80
 batch_size = 512
 batches_per_epoch = len(training_data) // batch_size
-
 best_acc = - float('inf')   # init to negative infinity
 best_weights = None
 train_loss_hist = []
@@ -340,49 +371,59 @@ avg_precision_hist = []
 best_thresholds_hist = []
 best_f1_hist = []
 
-# training loop
-for epoch in range(n_epochs):
-    # set model in training mode and run through each batch
-    model.train()
-    with tqdm.trange(batches_per_epoch, unit="batch", mininterval=0) as bar:
-        bar.set_description(f"Epoch {epoch}")
-        for i in bar:
-            # take a batch
-            start = i * batch_size
-            x_batch = training_data_tensor[start:start+batch_size].to(device)
-            y_batch = training_answers_tensor[start:start+batch_size].to(device)
+if(not load_old_model):
+    # training loop
+    for epoch in range(n_epochs):
+        # set model in training mode and run through each batch
+        model.train()
+        with tqdm.trange(batches_per_epoch, unit="batch", mininterval=0) as bar:
+            bar.set_description(f"Epoch {epoch}")
+            for i in bar:
+                # take a batch
+                start = i * batch_size
+                x_batch = training_data_tensor[start:start+batch_size].to(device)
+                y_batch = training_answers_tensor[start:start+batch_size].to(device)
 
-            # forward pass
-            y_pred = model(x_batch)
-            y_batch = y_batch.unsqueeze(1)
-            loss = loss_fn(y_pred, y_batch)
+                # forward pass
+                y_pred = model(x_batch)
+                y_batch = y_batch.unsqueeze(1)
+                loss = loss_fn(y_pred, y_batch)
 
-            # backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            # update weights
-            optimizer.step()
-            y_prob = torch.sigmoid(y_pred).float()
-            
-            # compute and store metrics
-            y_pred_labels = (y_prob > 0.7).float()
-            acc = (y_pred_labels.squeeze() == y_batch.float()).float().mean()
-            f1 = f1_score(y_batch.cpu().numpy(), y_pred_labels.cpu().numpy())
-            precision, recall, thresholds = precision_recall_curve(y_batch.cpu().numpy(), y_prob.detach().numpy())
-            avg_precision = average_precision_score(y_batch.cpu().numpy(), y_prob.detach().numpy())
+                # backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                # update weights
+                optimizer.step()
+                y_prob = torch.sigmoid(y_pred).float()
 
-            train_loss_hist.append(float(loss))
-            train_acc_hist.append(float(acc))
-            train_f1_hist.append(float(f1))
-            precision_hist.append(precision)
-            recall_hist.append(recall)
-            thresholds_hist.append(thresholds)
-            avg_precision_hist.append(avg_precision)
+                # compute and store metrics
+                y_pred_labels = (y_prob > 0.94).float()
+                acc = (y_pred_labels.squeeze() == y_batch.float()).float().mean()
+                f1 = f1_score(y_batch.cpu().numpy(), y_pred_labels.cpu().numpy())
+                precision, recall, thresholds = precision_recall_curve(y_batch.cpu().numpy(), y_prob.detach().numpy())
+                avg_precision = average_precision_score(y_batch.cpu().numpy(), y_prob.detach().numpy())
 
-            bar.set_postfix(
-                loss=float(loss),
-                acc=float(acc)
-            )
+                train_loss_hist.append(float(loss))
+                train_acc_hist.append(float(acc))
+                train_f1_hist.append(float(f1))
+                precision_hist.append(precision)
+                recall_hist.append(recall)
+                thresholds_hist.append(thresholds)
+                avg_precision_hist.append(avg_precision)
+
+                bar.set_postfix(
+                    loss=float(loss),
+                    acc=float(acc)
+                )
+        val_score = f1
+        early_stopping(val_score, model, 'checkpoint.pth')
+
+        if early_stopping.early_stop:
+            print("Early stopping triggered. Stopping training.")
+            break
+    else:
+        torch.load("best_model.pth")
+        best_weights = copy.deepcopy(model.state_dict())
     # set model in evaluation mode and run through the test set
     model.eval()
     with torch.no_grad():
@@ -395,7 +436,7 @@ for epoch in range(n_epochs):
         y_prob_flat = y_prob.view(-1).cpu().numpy()
         y_test_flat = y_test.view(-1).cpu().numpy().astype(int)
 
-        y_pred_labels = (y_prob_flat > 0.7).astype(int)
+        y_pred_labels = (y_prob_flat > 0.94).astype(int)
 
         acc = (y_pred_labels == y_test_flat).mean()
         ce_loss = loss_fn(y_pred, y_test.unsqueeze(1))
@@ -404,12 +445,11 @@ for epoch in range(n_epochs):
         acc = float(acc)
         ce_loss = float(ce_loss)
         precision, recall, thresholds = precision_recall_curve(y_test_flat, y_prob_flat)
-        print(thresholds)
+        #print(thresholds)
         avg_precision = average_precision_score(y_test.cpu().numpy(), y_prob.cpu().numpy())
         
         # Only keep every thousandth sample since there's over 80k per epoch
         thresholds_subsampled = thresholds[::1000]
-        print(thresholds.size)
         f1_scores_temp = np.array([
             f1_score(y_test_flat, (y_prob_flat >= t).astype(int))
             for t in thresholds_subsampled
@@ -443,29 +483,32 @@ for epoch in range(n_epochs):
 
         print(f"Epoch {epoch} validation: Cross-entropy={ce_loss:.4f}, Accuracy={acc * 100:.2f}%, F1 Score={f1:.4f}")
 
-# Restore best model
-model.load_state_dict(best_weights)
+if(not load_old_model):
+    # Restore best model
+    model.load_state_dict(best_weights)
 
-# Plot the loss and accuracy
-plt.plot(train_loss_hist, label="train")
-plt.plot(np.arange(0, batches_per_epoch*n_epochs, batches_per_epoch), test_acc_hist, label="test")
-plt.xlabel("Learning Iteration")
-plt.ylabel("cross entropy")
-plt.legend()
-plt.show()
+    # Plot the loss and accuracy
+    plt.plot(train_loss_hist, label="train")
+    #plt.plot(np.arange(0, batches_per_epoch*n_epochs, batches_per_epoch), test_acc_hist, label="test")
+    plt.xlabel("Learning Iteration")
+    plt.ylabel("cross entropy")
+    plt.legend()
+    plt.show()
 
-plt.plot(train_acc_hist, label="train")
-plt.plot(np.arange(0, batches_per_epoch*n_epochs, batches_per_epoch), test_acc_hist, label="test")
-plt.xlabel("Learning Iteration")
-plt.ylabel("accuracy")
-plt.legend()
-plt.show()
+    plt.plot(train_acc_hist, label="train")
+    #plt.plot(np.arange(0, batches_per_epoch*n_epochs, batches_per_epoch), test_acc_hist, label="test")
+    plt.xlabel("Learning Iteration")
+    plt.ylabel("accuracy")
+    plt.legend()
+    plt.show()
 
-plt.plot(train_f1_hist, label="train")
-plt.plot(np.arange(0, batches_per_epoch*n_epochs, test_f1_hist, batches_per_epoch), label="test")
-plt.xlabel("Learning Iteration")
-plt.ylabel("F1 Score")
-plt.legend()
-plt.show()
+    plt.plot(train_f1_hist, label="train")
+    #plt.plot(np.arange(0, batches_per_epoch*n_epochs, batches_per_epoch), test_f1_hist, label="test")
+    plt.xlabel("Learning Iteration")
+    plt.ylabel("F1 Score")
+    plt.legend()
+    plt.show()
 
-torch.save(best_weights, "best_model.pth")
+    torch.save(best_weights, "best_model_01.pth")
+
+summary(model, input_size=(batch_size, 51))
